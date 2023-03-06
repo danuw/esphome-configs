@@ -6,7 +6,6 @@ esphome:
   name: epd47-1
   friendly_name: epd47-1
 
-#192.168.0.136
 esp32:
   board: esp32dev
   framework:
@@ -33,8 +32,8 @@ wifi:
 
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
-    ssid: '${friendly_name} Fallback AP'
-    password: !secret epd_appass
+    ssid: '${friendly_name} FAP'
+    password: !secret appass
 
 captive_portal:
    
@@ -70,6 +69,7 @@ display:
   - platform: lilygo_t5_47_display
     rotation: 0
     update_interval: 60s
+    full_update_every: 5
     lambda: |-
       
       it.strftime(15, 310, id(din_big), TextAlign::BASELINE_LEFT, "%H:%M", id(ntp).now());
