@@ -6,6 +6,7 @@ esphome:
   name: epd47-1
   friendly_name: epd47-1
 
+#192.168.0.136
 esp32:
   board: esp32dev
   framework:
@@ -55,6 +56,40 @@ switch:
   - platform: restart
     name: '${friendly_name} Restart'
 
+binary_sensor:
+  - platform: gpio
+    pin: 
+      number: GPIO39
+      inverted: true
+    name: "lilygo-t5 Button 1"
+    on_press:
+      then:
+       - component.update: t5_display
+  - platform: gpio
+    pin: 
+      number: GPIO34
+      inverted: true
+    name: "lilygo-t5 Button 2"
+    on_press:
+      then:
+       - display.page.show_next: t5_display
+       - component.update: t5_display
+  - platform: gpio
+    pin: 
+      number: GPIO35
+      inverted: true
+    name: "lilygo-t5 Button 3"
+    on_press:
+      then:
+       - display.page.show_previous: t5_display
+       - component.update: t5_display
+
+#interval:
+#  - interval: 10s
+#    then:
+#      - display.page.show_next: t5_display
+#      - component.update: t5_display
+
 # display
 font:
   - file: 'fonts/IBMPlexMono-Bold.ttf'
@@ -64,13 +99,88 @@ font:
   - file: 'fonts/IBMPlexMono-Bold.ttf'
     id: din_med
     size: 100
+  - file: 'fonts/IBMPlexMono-Bold.ttf'
+    id: din_med2
+    size: 40
+  - file: 'fonts/IBMPlexMono-Bold.ttf'
+    id: din_small
+    size: 30
 
 display:
   - platform: lilygo_t5_47_display
+    id: t5_display
     rotation: 0
     update_interval: 60s
     full_update_every: 5
-    lambda: |-
-      
-      it.strftime(15, 310, id(din_big), TextAlign::BASELINE_LEFT, "%H:%M", id(ntp).now());
-      it.strftime(50, 500, id(din_med), TextAlign::BASELINE_LEFT, "%Y-%m-%d %a", id(ntp).now());
+    pages:
+      - id: page1
+        lambda: |-
+          it.strftime(15, 310, id(din_big), TextAlign::BASELINE_LEFT, "%H:%M", id(ntp).now());
+          it.strftime(50, 500, id(din_med), TextAlign::BASELINE_LEFT, "%Y-%m-%d %a", id(ntp).now());
+      - id: page2
+        lambda: |-
+          // positioning constants
+          #define xRes 960
+          #define yRes 540
+          #define xCenter (xRes/2 + 40) // X position center
+
+          it.strftime(xCenter + 100, 40, id(din_small), TextAlign::BASELINE_LEFT, "%Y-%m-%d %a", id(ntp).now());
+          it.strftime(15, 310, id(din_big), TextAlign::BASELINE_LEFT, "%H:%M", id(ntp).now());
+          it.print(50, 380, id(din_small), TextAlign::BASELINE_LEFT, "The sun will rise at HHhmm and will set at HHhmm - Have a great day");
+          it.strftime(50, 500, id(din_med), TextAlign::BASELINE_LEFT, "%Y-%m-%d %a", id(ntp).now());
+
+          it.print(xRes - 40, yRes - 40, id(din_small), TextAlign::BOTTOM_LEFT, "2");
+      - id: page3
+        lambda: |-
+          // positioning constants
+          #define xRes 960
+          #define yRes 540
+          #define xCenter (xRes/2 + 40) // X position center
+
+          it.print(xRes - 40, yRes - 40, id(din_small), TextAlign::BASELINE_LEFT, "3");
+      - id: page4
+        lambda: |-
+          // positioning constants
+          #define xRes 960
+          #define yRes 540
+          #define xCenter (xRes/2 + 40) // X position center
+
+          it.strftime(10, 10, id(din_small), TextAlign::TOP_LEFT, "%H:%M", id(ntp).now());
+          it.print(xRes - 40, yRes-40, id(din_small), TextAlign::BASELINE_LEFT, "4");
+
+          /// Multiline text from https://community.home-assistant.io/t/eink-multi-line-text/255814/8
+          std::string s = "Some really interesting quote over multiple lines centered on the page - by Author";//id(weather).state;
+
+          int limit = 35;
+          int space = 0;
+          int i = 0;
+          int line = 0;
+          int y= 70; // start Y
+          while(i<s.length()){ //loop through string, counting all the spaces, and replacing the last one with ~ [marked by space variable] if the count exceeds limit of 35
+            if(s.substr(i,1) == " "){space = i; }
+            if(line>limit-1){s=s.substr(0,space)+"~"+s.substr(space+1);line = 0;}
+              i++;line++;
+          }
+          size_t pos = s.find("~"); //find the first line break
+
+          int linecount = 1; //need number of lines to store the break positions in an array
+          int breakpositions[10]; //store breakpositions [the '~']
+          breakpositions[0] = -1; // start at -1 cause we need to truncate the replaced characters and without this will cut off 1st character of message
+          while ( pos != std::string::npos) //loop through  replacing the ~ with CR - though this doesnt matter here it will never be displayed, but need to change them to keep the loop from repeating at the start
+          {
+            s.replace(pos,1, "\n");
+            breakpositions[linecount] = pos; //store the position of the break in an array
+            pos = s.find("~"); // move forward
+            linecount++; // we have a new line, count it
+          }
+          breakpositions[linecount] = s.length(); //set the last entry in array to the length of string for calculation below
+          std::string singleline; //this will be the line we print
+
+          i = 0;
+          while (i < linecount ) {  // count through the lines
+            singleline = s.substr(breakpositions[i]+1,(breakpositions[i+1]-breakpositions[i]-1)); //extract each line of text from the string - strip off the CRLF and the space.
+            it.printf(xCenter, y, id(din_med2), TextAlign::BASELINE_CENTER, "%s", singleline.c_str()); //print it!
+            y=y+30; // increment y to print properly on display
+            i++;
+          }
+          
