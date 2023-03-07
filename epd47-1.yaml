@@ -84,6 +84,10 @@ binary_sensor:
        - display.page.show_previous: t5_display
        - component.update: t5_display
 
+qr_code:
+  - id: homepage_qr
+    value: !secret qr_joinguestwifi
+
 #interval:
 #  - interval: 10s
 #    then:
@@ -115,6 +119,7 @@ display:
     pages:
       - id: page1
         lambda: |-
+          //id(t5_display).clear();
           it.strftime(15, 310, id(din_big), TextAlign::BASELINE_LEFT, "%H:%M", id(ntp).now());
           it.strftime(50, 500, id(din_med), TextAlign::BASELINE_LEFT, "%Y-%m-%d %a", id(ntp).now());
       - id: page2
@@ -123,6 +128,8 @@ display:
           #define xRes 960
           #define yRes 540
           #define xCenter (xRes/2 + 40) // X position center
+
+          //id(t5_display).clear();
 
           it.strftime(xCenter + 100, 40, id(din_small), TextAlign::BASELINE_LEFT, "%Y-%m-%d %a", id(ntp).now());
           it.strftime(15, 310, id(din_big), TextAlign::BASELINE_LEFT, "%H:%M", id(ntp).now());
@@ -137,7 +144,10 @@ display:
           #define yRes 540
           #define xCenter (xRes/2 + 40) // X position center
 
-          it.print(xRes - 40, yRes - 40, id(din_small), TextAlign::BASELINE_LEFT, "3");
+          id(t5_display).clear();
+
+          it.fill(COLOR_ON);
+          it.print(xRes - 40, yRes - 40, id(din_small), COLOR_OFF, TextAlign::BASELINE_LEFT, "3");
       - id: page4
         lambda: |-
           // positioning constants
@@ -145,8 +155,12 @@ display:
           #define yRes 540
           #define xCenter (xRes/2 + 40) // X position center
 
-          it.strftime(10, 10, id(din_small), TextAlign::TOP_LEFT, "%H:%M", id(ntp).now());
-          it.print(xRes - 40, yRes-40, id(din_small), TextAlign::BASELINE_LEFT, "4");
+          id(t5_display).clear();
+
+          it.fill(COLOR_ON);
+
+          it.strftime(10, 10, id(din_small), COLOR_OFF, TextAlign::TOP_LEFT, "%H:%M", id(ntp).now());
+          it.print(xRes - 40, yRes-40, id(din_small), COLOR_OFF, TextAlign::BASELINE_LEFT, "4");
 
           /// Multiline text from https://community.home-assistant.io/t/eink-multi-line-text/255814/8
           std::string s = "Some really interesting quote over multiple lines centered on the page - by Author";//id(weather).state;
@@ -179,8 +193,22 @@ display:
           i = 0;
           while (i < linecount ) {  // count through the lines
             singleline = s.substr(breakpositions[i]+1,(breakpositions[i+1]-breakpositions[i]-1)); //extract each line of text from the string - strip off the CRLF and the space.
-            it.printf(xCenter, y, id(din_med2), TextAlign::BASELINE_CENTER, "%s", singleline.c_str()); //print it!
+            it.printf(xCenter, y, id(din_med2), COLOR_OFF, TextAlign::BASELINE_CENTER, "%s", singleline.c_str()); //print it!
             y=y+30; // increment y to print properly on display
             i++;
           }
+      - id: page5
+        lambda: |-
+          // positioning constants
+          #define xRes 960
+          #define yRes 540
+          #define xCenter (xRes/2 + 40) // X position center
+
+          id(t5_display).clear();
+
+          it.print(xRes - 40, yRes - 40, id(din_small), TextAlign::BASELINE_LEFT, "3");
+          // guest wifi
+          // WIFI:S:<WIFI NAME HERE>;T:WPA;P:<WIFI PASSWOD HERE>;H:false;;
+          // Draw the QR-code at position [x=50,y=0] with white color and a 2x scale
+          it.qr_code(50, 0, id(homepage_qr), COLOR_ON, 14);
           
