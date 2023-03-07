@@ -116,6 +116,10 @@ display:
     rotation: 0
     update_interval: 60s
     full_update_every: 5
+    on_page_change:
+      - then:
+          lambda: |-
+            id(t5_display).clear();
     pages:
       - id: page1
         lambda: |-
@@ -144,7 +148,7 @@ display:
           #define yRes 540
           #define xCenter (xRes/2 + 40) // X position center
 
-          id(t5_display).clear();
+          //id(t5_display).clear();
 
           it.fill(COLOR_ON);
           it.print(xRes - 40, yRes - 40, id(din_small), COLOR_OFF, TextAlign::BASELINE_LEFT, "3");
@@ -155,7 +159,7 @@ display:
           #define yRes 540
           #define xCenter (xRes/2 + 40) // X position center
 
-          id(t5_display).clear();
+          //id(t5_display).clear();
 
           it.fill(COLOR_ON);
 
@@ -204,7 +208,7 @@ display:
           #define yRes 540
           #define xCenter (xRes/2 + 40) // X position center
 
-          id(t5_display).clear();
+          //id(t5_display).clear();
 
           it.print(xRes - 40, yRes - 40, id(din_small), TextAlign::BASELINE_LEFT, "3");
           // guest wifi
