@@ -416,6 +416,10 @@ display:
             return std::string(buffer);
         };
 
+        // Get current time as timestamp
+        auto current_time = id(homeassistant_time).now();
+        time_t current_timestamp = current_time.timestamp;
+
         // Draw events
         int even_x_start_offset = 460;
         int even_y_start_offset = 80;
@@ -423,6 +427,30 @@ display:
           if(even_y_start_offset >= 420){
             break;
           }
+
+          // Parse end time to check if event is ongoing
+          time_t end_timestamp = parse_time(event.end_time);
+          bool is_ongoing = (current_timestamp >= event.start_timestamp && current_timestamp <= end_timestamp && end_timestamp != 0);
+
+          // Debug logging for ongoing event detection
+          ESP_LOGD("EventCheck", "Event: %s", event.message.c_str());
+          ESP_LOGD("EventCheck", "Start time string: %s", event.start_time.c_str());
+          ESP_LOGD("EventCheck", "End time string: %s", event.end_time.c_str());
+          ESP_LOGD("EventCheck", "Current timestamp: %ld", current_timestamp);
+          ESP_LOGD("EventCheck", "Start timestamp: %ld", event.start_timestamp);
+          ESP_LOGD("EventCheck", "End timestamp: %ld", end_timestamp);
+          ESP_LOGD("EventCheck", "Is ongoing: %s", is_ongoing ? "YES" : "NO");
+          
+          // Convert timestamps back to readable format for debugging
+          char current_readable[20], start_readable[20], end_readable[20];
+          struct tm *current_tm = localtime(&current_timestamp);
+          struct tm *start_tm = localtime(&event.start_timestamp);
+          struct tm *end_tm = localtime(&end_timestamp);
+          strftime(current_readable, sizeof(current_readable), "%H:%M %d/%m", current_tm);
+          strftime(start_readable, sizeof(start_readable), "%H:%M %d/%m", start_tm);
+          strftime(end_readable, sizeof(end_readable), "%H:%M %d/%m", end_tm);
+          ESP_LOGD("EventCheck", "Current: %s, Start: %s, End: %s", current_readable, start_readable, end_readable);
+          ESP_LOGD("EventCheck", "---");
 
           // Format time
           std::string formatted_date = format_date(event.start_time);
@@ -435,11 +463,30 @@ display:
           if(formatted_start_time == "Invalid" || formatted_end_time == "Invalid"){
             time_range.clear();
           }
-          // Display time range, e.g., "10:00AM - 11:00AM"
-          it.printf(even_x_start_offset, even_y_start_offset, id(sensor_font), "%s", time_range.c_str());
-          even_y_start_offset += 30;
-          // Display event name
-          it.printf(even_x_start_offset, even_y_start_offset, id(sensor_font), "%s", event.message.c_str());
+
+          // If event is ongoing, draw background rectangle and use white text
+          if (is_ongoing) {
+            // Calculate rectangle dimensions
+            int rect_width = 320;  // Adjust based on your display width
+            int rect_height = 65;  // Height to cover both time and event text
+            int rect_x = even_x_start_offset - 10;
+            int rect_y = even_y_start_offset - 5;
+            
+            // Draw filled rectangle with black background
+            it.filled_rectangle(rect_x, rect_y, rect_width, rect_height, COLOR_ON);
+            
+            // Display time range with white text (COLOR_OFF on black background)
+            it.printf(even_x_start_offset, even_y_start_offset, id(sensor_font), COLOR_OFF, "%s", time_range.c_str());
+            even_y_start_offset += 30;
+            // Display event name with white text (COLOR_OFF on black background)
+            it.printf(even_x_start_offset, even_y_start_offset, id(sensor_font), COLOR_OFF, "%s", event.message.c_str());
+          } else {
+            // Display time range with normal black text
+            it.printf(even_x_start_offset, even_y_start_offset, id(sensor_font), "%s", time_range.c_str());
+            even_y_start_offset += 30;
+            // Display event name with normal black text
+            it.printf(even_x_start_offset, even_y_start_offset, id(sensor_font), "%s", event.message.c_str());
+          }
           even_y_start_offset += 40;
         }
       }
