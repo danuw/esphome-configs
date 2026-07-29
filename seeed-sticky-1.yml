@@ -1,37 +1,26 @@
-
-  # =============================================================================
-# reTerminal Sticky — ESPHome Hardware Example
-# reTerminal Sticky — ESPHome 硬件示例
 # =============================================================================
+# reTerminal Sticky — HomeDash-style room controller
+# 800x480 monochrome ePaper + GT911 touch + Home Assistant
 #
-# MCU: ESP32-S3R8 (8 MB octal PSRAM, 32 MB flash)
-# 主控：ESP32-S3R8（8 MB 八核 PSRAM，32 MB 闪存）
-#
-# Hardware list / 硬件清单:
-#   1. 3.97" B/W ePaper 800x480 (SSD1677, SPI)    / 3.97 英寸黑白墨水屏
-#   2. 3x buttons (UP=GPIO5, DOWN=GPIO6, OK=GPIO4) / 3 个按键
-#   3. Buzzer (GPIO48, PWM)                        / 蜂鸣器
-#   4. Battery: BQ27220 fuel gauge + BQ25616 charger / 电池：电量计 + 充电管理
-#   5. SHT40 temp & humidity (I2C @0x44)            / SHT40 温湿度
-#   6. PCF8563 RTC (I2C @0x51)                      / PCF8563 实时时钟
-#   7. PDM Microphone (CLK=19, DATA=20, EN=38)     / PDM 麦克风
-#   8. MicroSD (SPI, EN=10, DET=11, CS=8)          / MicroSD 卡槽
-#   9. LSM6DS3TR-C IMU (I2C @0x6A)                 / 六轴 IMU
-#  10. GT911 touch (I2C @0x5D, INT=21, RST=41)     / 电容触摸
-#  11. Deep sleep with GPIO4 ext1 wake-up          / 深度睡眠 + 按键唤醒
-#
-# Critical: GPIO45 (PWR_HOLD) + GPIO46 (PWR_LOCK) must be HIGH at boot,
-# otherwise the device powers off. Handled by the required "power_hold" option.
-# 关键：启动必须拉高 GPIO45/GPIO46，否则断电。由必选项 power_hold 处理。
-#
-# Serial debug: UART0 via CH343P USB-to-UART bridge.
-# 串口调试：通过 CH343P 桥接芯片走 UART0。
+# Default room: Hendon Therapy Hub / garden office
+# Edit only the substitutions below to reuse this dashboard in another room.
 # =============================================================================
 
 substitutions:
   device_name: seeed-sticky-1
-  friendly_name: "seeed-sticky-1"
+  friendly_name: "Sticky Hub Dashboard"
 
+  room_name: "Hendon Therapy Hub"
+  control_1_name: "LIGHTS OUTSIDE"
+  control_2_name: "LIGHTS INSIDE"
+  control_3_name: "HEATING"
+
+  control_1_entity: "switch.hub_light_switch_l1"
+  control_2_entity: "switch.hub_light_switch_l2"
+  control_3_entity: "switch.hub_heater_smart_plug"
+
+  # Stored in secrets.yaml so the real SSID is not committed with this file.
+  guest_wifi_ssid: !secret guest_wifi_ssid
 
 esphome:
   name: ${device_name}
@@ -39,17 +28,15 @@ esphome:
   on_boot:
     priority: 600
     then:
-      # Hold power rails on / 保持电源轨开启
+      # Sticky switches itself off unless both power latch pins stay high.
       - output.turn_on: pwr_hold
       - output.turn_on: pwr_lock
-      # Turn on touch panel power / 打开触摸供电
       - switch.turn_on: touch_power_enable
-      # Read RTC time on boot / 启动读取 RTC 时间
       - pcf8563.read_time:
+      - delay: 3s
+      - display.page.show: room_page
+      - component.update: epaper_display
 
-# ESP32-S3R8 — generic S3 board. Octal PSRAM may need a board that enables it,
-# or manual config; adjust if your build does not expose PSRAM.
-# ESP32-S3R8 板级配置；八核 PSRAM 可能需要支持 PSRAM 的板子或手动配置。
 esp32:
   board: esp32-s3-devkitc-1
   variant: ESP32S3
@@ -59,39 +46,69 @@ esp32:
     advanced:
       enable_idf_experimental_features: true
 
-# Serial logging goes to the physical UART0 (CH343P bridge), not USB_CDC.
-# 串口日志走物理 UART0（CH343P 桥接），非 USB_CDC。
 logger:
   hardware_uart: UART0
 
+api:
+  id: sticky_api
+  encryption:
+    key: !secret epd_key
+  on_client_connected:
+    - logger.log: "Home Assistant API client connected"
+    - script.execute: refresh_display_delayed
+  on_client_disconnected:
+    - logger.log: "Home Assistant API client disconnected"
+    - script.execute: refresh_display_delayed
+
+ota:
+  - platform: esphome
+    password: !secret epd_pass
+
+wifi:
+  ssid: !secret wifi2_ssid
+  password: !secret wifi2_password
+  ap:
+    ssid: "Sticky Hub Fallback"
+    password: !secret sticky_fallback_password
+  on_connect:
+    - script.execute: refresh_display_delayed
+
+captive_portal:
+
 # =============================================================================
-# Fonts / 字体
+# Fonts and QR code
 # =============================================================================
 
 font:
+  - file: "gfonts://Inter@700"
+    id: font_tiny
+    size: 16
   - file: "gfonts://Inter@700"
     id: font_small
     size: 20
   - file: "gfonts://Inter@700"
     id: font_medium
-    size: 32
+    size: 28
   - file: "gfonts://Inter@700"
     id: font_large
-    size: 48
+    size: 40
 
-# SPI — shared by ePaper display and SD card
-# SPI — 墨水屏与 SD 卡共用（多 CS 设备共用总线）
+qr_code:
+  - id: guest_wifi_qr
+    # Example secret value:
+    # WIFI:T:WPA;S:My Guest WiFi;P:MyGuestPassword;;
+    value: !secret guest_wifi_qr_payload
+    ecc: MEDIUM
+
+# =============================================================================
+# Sticky hardware buses and power
+# =============================================================================
+
 spi:
   clk_pin: GPIO13
   mosi_pin: GPIO14
   miso_pin: GPIO12
 
-# I2C sensor bus — SHT4x, PCF8563, BQ27220, LSM6DS3
-# I2C 传感器总线 — 温湿度 / RTC / 电量计 / IMU
-# GPIO0 is an ESP32-S3 strapping pin; keep this bus passive during boot.
-# GPIO0 是 S3 strapping 引脚，启动期间保持该总线被动。
-# I2C touch bus — GT911 touch controller
-# I2C 触摸总线 — GT911 触摸
 i2c:
   - id: i2c_sensor
     scl: GPIO0
@@ -104,26 +121,19 @@ i2c:
     frequency: 100kHz
 
 output:
-  # Power latch hold — must be HIGH or the device powers off
-  # 电源锁存，必须为高，否则断电
   - platform: gpio
     pin: GPIO45
     id: pwr_hold
 
-  # Power lock — must be HIGH after boot
-  # 电源锁定，启动后必须为高
   - platform: gpio
     pin: GPIO46
     id: pwr_lock
 
-  # Buzzer PWM output (LEDC) / 蜂鸣器 PWM 输出（LEDC）
   - platform: ledc
     pin: GPIO48
     id: buzzer_pwm
     frequency: 1000Hz
 
-  # BQ25616 charger enable (GPIO39, active LOW: LOW = charging enabled)
-  # 充电使能（GPIO39，低有效：低电平 = 允许充电）
   - platform: gpio
     pin:
       number: GPIO39
@@ -131,7 +141,6 @@ output:
     id: charge_enable
 
 switch:
-  # Touch panel power enable / 触摸面板供电使能
   - platform: gpio
     pin: GPIO42
     id: touch_power_enable
@@ -139,9 +148,18 @@ switch:
     restore_mode: ALWAYS_ON
     setup_priority: 1100
 
+light:
+  - platform: monochromatic
+    output: buzzer_pwm
+    name: "Buzzer"
+    id: buzzer
+    default_transition_length: 0s
+
+# =============================================================================
+# Local environment and battery sensors
+# =============================================================================
+
 sensor:
-  # SHT40 temperature & humidity (I2C @0x44)
-  # SHT40 温湿度传感器（I2C 地址 0x44）
   - platform: sht4x
     i2c_id: i2c_sensor
     address: 0x44
@@ -153,8 +171,6 @@ sensor:
       id: hum_sensor
     update_interval: 60s
 
-  # BQ27220 state-of-charge (I2C @0x55, register 0x2C)
-  # BQ27220 电量百分比（I2C 地址 0x55，寄存器 0x2C）
   - platform: template
     id: battery_level
     name: "Battery Level"
@@ -167,13 +183,12 @@ sensor:
       uint8_t reg = 0x2C;
       uint8_t raw[2] = {0, 0};
       auto err = id(i2c_sensor).write_readv(0x55, &reg, 1, raw, 2);
-      if (err != esphome::i2c::ERROR_OK) {
-        return NAN;
-      }
-      return static_cast<float>(static_cast<uint16_t>(raw[0]) | (static_cast<uint16_t>(raw[1]) << 8));
+      if (err != esphome::i2c::ERROR_OK) return NAN;
+      return static_cast<float>(
+        static_cast<uint16_t>(raw[0]) |
+        (static_cast<uint16_t>(raw[1]) << 8)
+      );
 
-  # BQ27220 battery voltage in millivolts (register 0x08)
-  # BQ27220 电池电压，单位 mV（寄存器 0x08）
   - platform: template
     id: battery_voltage
     name: "Battery Voltage"
@@ -186,13 +201,12 @@ sensor:
       uint8_t reg = 0x08;
       uint8_t raw[2] = {0, 0};
       auto err = id(i2c_sensor).write_readv(0x55, &reg, 1, raw, 2);
-      if (err != esphome::i2c::ERROR_OK) {
-        return NAN;
-      }
-      return static_cast<float>(static_cast<uint16_t>(raw[0]) | (static_cast<uint16_t>(raw[1]) << 8));
+      if (err != esphome::i2c::ERROR_OK) return NAN;
+      return static_cast<float>(
+        static_cast<uint16_t>(raw[0]) |
+        (static_cast<uint16_t>(raw[1]) << 8)
+      );
 
-  # BQ27220 signed charge/discharge current in milliamps (register 0x0C)
-  # BQ27220 充放电电流，单位 mA（寄存器 0x0C，正数表示充电）
   - platform: template
     id: battery_current
     name: "Battery Current"
@@ -205,90 +219,16 @@ sensor:
       uint8_t reg = 0x0C;
       uint8_t raw[2] = {0, 0};
       auto err = id(i2c_sensor).write_readv(0x55, &reg, 1, raw, 2);
-      if (err != esphome::i2c::ERROR_OK) {
-        return NAN;
-      }
-      uint16_t raw_value = static_cast<uint16_t>(raw[0]) | (static_cast<uint16_t>(raw[1]) << 8);
+      if (err != esphome::i2c::ERROR_OK) return NAN;
+      uint16_t raw_value = static_cast<uint16_t>(raw[0]) |
+                           (static_cast<uint16_t>(raw[1]) << 8);
       return static_cast<float>(static_cast<int16_t>(raw_value));
 
-binary_sensor:
-  # UP button (GPIO5) — short beep
-  # UP 按键（GPIO5）— 短蜂鸣
-  - platform: gpio
-    pin:
-      number: GPIO5
-      mode: INPUT_PULLUP
-      inverted: true
-    id: button_up
-    name: "Button UP"
-    on_press:
-      then:
-        - logger.log: "Button UP pressed"
-        - light.turn_on:
-            id: buzzer
-            brightness: 50%
-        - delay: 200ms
-        - light.turn_off: buzzer
-
-  # DOWN button (GPIO6) — short beep
-  # DOWN 按键（GPIO6）— 短蜂鸣
-  - platform: gpio
-    pin:
-      number: GPIO6
-      mode: INPUT_PULLUP
-      inverted: true
-    id: button_down
-    name: "Button DOWN"
-    on_press:
-      then:
-        - logger.log: "Button DOWN pressed"
-        - light.turn_on:
-            id: buzzer
-            brightness: 50%
-        - delay: 200ms
-        - light.turn_off: buzzer
-
-  # OK / Power button (GPIO4) — also deep-sleep wake source
-  # OK / 电源按键（GPIO4）— 同时作为深度睡眠唤醒源
-  - platform: gpio
-    pin:
-      number: GPIO4
-      mode: INPUT_PULLUP
-      inverted: true
-    id: button_ok
-    name: "Button OK"
-    on_press:
-      then:
-        - logger.log: "Button OK pressed"
-        - light.turn_on:
-            id: buzzer
-            brightness: 50%
-        - delay: 200ms
-        - light.turn_off: buzzer
-
-  # Charging state inferred from BQ27220 current (>20mA means charging)
-  # 充电状态根据 BQ27220 电流判断（大于 20mA 表示充电中）
-  - platform: template
-    id: charging
-    name: "Battery Charging"
-    lambda: |-
-      if (isnan(id(battery_current).state)) {
-        return false;
-      }
-      return id(battery_current).state > 20.0f;
-
-light:
-  # Buzzer wrapped as a "light": brightness = volume
-  # 蜂鸣器包装成"灯"实体：亮度 = 音量
-  - platform: monochromatic
-    output: buzzer_pwm
-    name: "Buzzer"
-    id: buzzer
-    default_transition_length: 0s
+# =============================================================================
+# RTC and reusable interaction scripts
+# =============================================================================
 
 time:
-  # PCF8563 at I2C address 0x51. Read on boot; HA sync writes back.
-  # PCF8563（I2C 0x51）。启动读取；HA 同步后回写。
   - platform: pcf8563
     i2c_id: i2c_sensor
     id: rtc_time
@@ -299,35 +239,168 @@ time:
     on_time_sync:
       then:
         - pcf8563.write_time:
+        - script.execute: refresh_display_delayed
 
-# Home Assistant native API / Home Assistant 原生 API
-api:
-  encryption:
-    key: !secret epd_key
+script:
+  # Immediate confirmation while the ePaper screen is refreshing.
+  - id: touch_feedback
+    mode: restart
+    then:
+      - light.turn_on:
+          id: buzzer
+          brightness: 35%
+      - delay: 70ms
+      - light.turn_off: buzzer
 
-# OTA (Over-The-Air) firmware update / 空中固件更新
-ota:
-  - platform: esphome
-    password: !secret epd_pass
+  # Coalesce Wi-Fi, API and Home Assistant state changes into one refresh.
+  - id: refresh_display_delayed
+    mode: restart
+    then:
+      - delay: 1500ms
+      - component.update: epaper_display
 
-# Wi-Fi settings / Wi-Fi 设置
-wifi:
-  ssid: !secret wifi2_ssid
-  password: !secret wifi2_password
-  ap:
-    ssid: "reTerminal-Sticky"
-    password: "ChangeMe123"
+  - id: action_success_feedback
+    mode: restart
+    then:
+      - logger.log: "Home Assistant action succeeded"
+      - light.turn_on:
+          id: buzzer
+          brightness: 25%
+      - delay: 60ms
+      - light.turn_off: buzzer
+      # Allow the imported HA entity state to arrive before redrawing e-paper.
+      - delay: 600ms
+      - script.execute: refresh_display_delayed
 
-captive_portal:
+  - id: action_error_feedback
+    mode: restart
+    then:
+      - logger.log:
+          level: ERROR
+          format: "Home Assistant action failed or API is unavailable"
+      - light.turn_on:
+          id: buzzer
+          brightness: 65%
+      - delay: 250ms
+      - light.turn_off: buzzer
+      - delay: 120ms
+      - light.turn_on:
+          id: buzzer
+          brightness: 65%
+      - delay: 250ms
+      - light.turn_off: buzzer
+
+  - id: toggle_control_1
+    then:
+      - script.execute: touch_feedback
+      - if:
+          condition:
+            api.connected:
+          then:
+            - logger.log: "Requesting switch.toggle for ${control_1_entity}"
+            - homeassistant.action:
+                action: switch.toggle
+                data:
+                  entity_id: "${control_1_entity}"
+                on_success:
+                  - script.execute: action_success_feedback
+                on_error:
+                  - script.execute: action_error_feedback
+          else:
+            - script.execute: action_error_feedback
+
+  - id: toggle_control_2
+    then:
+      - script.execute: touch_feedback
+      - if:
+          condition:
+            api.connected:
+          then:
+            - logger.log: "Requesting switch.toggle for ${control_2_entity}"
+            - homeassistant.action:
+                action: switch.toggle
+                data:
+                  entity_id: "${control_2_entity}"
+                on_success:
+                  - script.execute: action_success_feedback
+                on_error:
+                  - script.execute: action_error_feedback
+          else:
+            - script.execute: action_error_feedback
+
+  - id: toggle_control_3
+    then:
+      - script.execute: touch_feedback
+      - if:
+          condition:
+            api.connected:
+          then:
+            - logger.log: "Requesting switch.toggle for ${control_3_entity}"
+            - homeassistant.action:
+                action: switch.toggle
+                data:
+                  entity_id: "${control_3_entity}"
+                on_success:
+                  - script.execute: action_success_feedback
+                on_error:
+                  - script.execute: action_error_feedback
+          else:
+            - script.execute: action_error_feedback
+
+  - id: room_all_off
+    then:
+      - script.execute: touch_feedback
+      - if:
+          condition:
+            api.connected:
+          then:
+            - logger.log: "Requesting room all off"
+            - homeassistant.action:
+                action: switch.turn_off
+                data:
+                  entity_id: "${control_1_entity}"
+                on_error:
+                  - script.execute: action_error_feedback
+            - homeassistant.action:
+                action: switch.turn_off
+                data:
+                  entity_id: "${control_2_entity}"
+                on_error:
+                  - script.execute: action_error_feedback
+            - homeassistant.action:
+                action: switch.turn_off
+                data:
+                  entity_id: "${control_3_entity}"
+                on_success:
+                  - script.execute: action_success_feedback
+                on_error:
+                  - script.execute: action_error_feedback
+          else:
+            - script.execute: action_error_feedback
 
 # =============================================================================
-# [10] GT911 capacitive touch (I2C @0x5D on i2c_touch, 800x480)
-# 电容触摸（GT911，I2C 地址 0x5D，挂载 i2c_touch 总线，800×480）
+# Diagnostic test button
+# Use this once from Home Assistant to separate API/action issues from touch issues.
 # =============================================================================
+
+button:
+  - platform: template
+    name: "Test dashboard Light 1 toggle"
+    id: test_dashboard_light_1
+    entity_category: diagnostic
+    on_press:
+      then:
+        - script.execute: toggle_control_1
+
+# =============================================================================
+# Touch controller
+# =============================================================================
+
 touchscreen:
   - platform: gt911
     i2c_id: i2c_touch
     id: sticky_touch
+    display: epaper_display
     interrupt_pin: GPIO21
     reset_pin: GPIO41
     on_touch:
@@ -335,90 +408,297 @@ touchscreen:
           format: "Touch x=%d y=%d"
           args: [touch.x, touch.y]
 
-# -----------------------------------------------------------------------------
-# [4] BQ27220 fuel gauge (I2C @0x55 on i2c_sensor)
-# BQ27220 电量计（I2C 地址 0x55，挂载 i2c_sensor 总线）
-# The sensors above read BQ27220 registers directly with ESPHome's I2C bus API.
-# 上面的传感器通过 ESPHome I2C 总线 API 直接读取 BQ27220 寄存器。
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Buttons, Home Assistant states and touchscreen hit areas
+# =============================================================================
 
+binary_sensor:
+  # Physical buttons: UP=Room, DOWN=Guest Wi-Fi, OK=Home/refresh.
+  - platform: gpio
+    pin:
+      number: GPIO5
+      mode: INPUT_PULLUP
+      inverted: true
+    id: button_up
+    name: "Button UP"
+    on_press:
+      then:
+        - script.execute: touch_feedback
+        - display.page.show: room_page
+        - component.update: epaper_display
+
+  - platform: gpio
+    pin:
+      number: GPIO6
+      mode: INPUT_PULLUP
+      inverted: true
+    id: button_down
+    name: "Button DOWN"
+    on_press:
+      then:
+        - script.execute: touch_feedback
+        - display.page.show: guest_wifi_page
+        - component.update: epaper_display
+
+  - platform: gpio
+    pin:
+      number: GPIO4
+      mode: INPUT_PULLUP
+      inverted: true
+    id: button_ok
+    name: "Button OK"
+    on_press:
+      then:
+        - script.execute: touch_feedback
+        - display.page.show: room_page
+        - component.update: epaper_display
+
+  - platform: template
+    id: charging
+    name: "Battery Charging"
+    lambda: |-
+      if (isnan(id(battery_current).state)) return false;
+      return id(battery_current).state > 20.0f;
+
+  # Imported HA states make the tiles show their actual current state.
+  - platform: homeassistant
+    id: control_1_state
+    entity_id: ${control_1_entity}
+    internal: true
+    on_state:
+      then:
+        - script.execute: refresh_display_delayed
+
+  - platform: homeassistant
+    id: control_2_state
+    entity_id: ${control_2_entity}
+    internal: true
+    on_state:
+      then:
+        - script.execute: refresh_display_delayed
+
+  - platform: homeassistant
+    id: control_3_state
+    entity_id: ${control_3_entity}
+    internal: true
+    on_state:
+      then:
+        - script.execute: refresh_display_delayed
+
+  # Room page: four generous touch targets.
+  - platform: touchscreen
+    touchscreen_id: sticky_touch
+    id: touch_control_1
+    internal: true
+    page_id: room_page
+    x_min: 20
+    x_max: 390
+    y_min: 88
+    y_max: 220
+    on_press:
+      then:
+        - script.execute: toggle_control_1
+
+  - platform: touchscreen
+    touchscreen_id: sticky_touch
+    id: touch_control_2
+    internal: true
+    page_id: room_page
+    x_min: 410
+    x_max: 780
+    y_min: 88
+    y_max: 220
+    on_press:
+      then:
+        - script.execute: toggle_control_2
+
+  - platform: touchscreen
+    touchscreen_id: sticky_touch
+    id: touch_control_3
+    internal: true
+    page_id: room_page
+    x_min: 20
+    x_max: 390
+    y_min: 235
+    y_max: 367
+    on_press:
+      then:
+        - script.execute: toggle_control_3
+
+  - platform: touchscreen
+    touchscreen_id: sticky_touch
+    id: touch_all_off
+    internal: true
+    page_id: room_page
+    x_min: 410
+    x_max: 780
+    y_min: 235
+    y_max: 367
+    on_press:
+      then:
+        - script.execute: room_all_off
+
+  # Bottom navigation tabs.
+  - platform: touchscreen
+    touchscreen_id: sticky_touch
+    id: touch_room_tab
+    internal: true
+    page_id: guest_wifi_page
+    x_min: 0
+    x_max: 399
+    y_min: 400
+    y_max: 479
+    on_press:
+      then:
+        - script.execute: touch_feedback
+        - display.page.show: room_page
+        - component.update: epaper_display
+
+  - platform: touchscreen
+    touchscreen_id: sticky_touch
+    id: touch_wifi_tab
+    internal: true
+    page_id: room_page
+    x_min: 400
+    x_max: 799
+    y_min: 400
+    y_max: 479
+    on_press:
+      then:
+        - script.execute: touch_feedback
+        - display.page.show: guest_wifi_page
+        - component.update: epaper_display
 
 # =============================================================================
-# [1] ePaper display (3.97" B/W, 800x480, SSD1677, SPI)
-# 墨水屏（3.97 英寸黑白，800×480，SSD1677）
-# The "seeed-reterminal-sticky" model preset (ESPHome PR #16950) auto-fills
-# cs_pin=GPIO15, dc_pin=GPIO16, reset_pin=GPIO17, busy_pin=GPIO18,
-# enable_pin=GPIO47, mirror_x, and 10 MHz data rate. Requires ESPHome dev.
-# 模型预设自动填充墨水屏引脚与参数，需 ESPHome dev 版本。
+# 800x480 ePaper dashboard
 # =============================================================================
 
 display:
   - platform: epaper_spi
     id: epaper_display
     model: seeed-reterminal-sticky
-    update_interval: 300s
-    lambda: |-
-      ESP_LOGD("display", "=== ePaper display refresh ===");
+    update_interval: 5min
+    pages:
+      - id: room_page
+        lambda: |-
+          it.fill(Color::WHITE);
 
-      // ---- Title / 标题 ----
-      it.printf(400, 15, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER,
-                "reTerminal Sticky");
-      it.line(20, 55, 780, 55, COLOR_OFF);
+          // ---------- Shared header ----------
+          it.printf(20, 10, id(font_medium), Color::BLACK,
+                    TextAlign::TOP_LEFT, "${room_name}");
 
-      // ---- RTC Time / RTC 时间 ----
-      auto now = id(rtc_time).now();
-      if (now.is_valid()) {
-        it.strftime(400, 65, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER,
-                    "%Y-%m-%d  %H:%M", now);
-      } else {
-        it.printf(400, 65, id(font_medium), COLOR_OFF, TextAlign::TOP_CENTER,
-                  "RTC: waiting for sync...");
-      }
+          auto now = id(rtc_time).now();
+          if (now.is_valid()) {
+            it.strftime(780, 13, id(font_small), Color::BLACK,
+                        TextAlign::TOP_RIGHT, "%H:%M", now);
+          } else {
+            it.print(780, 13, id(font_small), Color::BLACK,
+                     TextAlign::TOP_RIGHT, "--:--");
+          }
 
-      // ---- Temperature / 温度 ----
-      if (id(temp_sensor).has_state()) {
-        it.printf(30, 120, id(font_large), COLOR_OFF, "Temp: %.1f C", id(temp_sensor).state);
-      } else {
-        it.printf(30, 120, id(font_large), COLOR_OFF, "Temp: -- C");
-      }
+          if (id(temp_sensor).has_state() && id(hum_sensor).has_state()) {
+            it.printf(20, 52, id(font_small), Color::BLACK,
+                      "%.1f C   %.0f%% RH",
+                      id(temp_sensor).state, id(hum_sensor).state);
+          } else {
+            it.print(20, 52, id(font_small), Color::BLACK,
+                     "Temperature --   Humidity --");
+          }
 
-      // ---- Humidity / 湿度 ----
-      if (id(hum_sensor).has_state()) {
-        it.printf(30, 185, id(font_large), COLOR_OFF, "Hum:  %.1f %%", id(hum_sensor).state);
-      } else {
-        it.printf(30, 185, id(font_large), COLOR_OFF, "Hum:  -- %%");
-      }
+          if (!isnan(id(battery_level).state)) {
+            it.printf(780, 52, id(font_small), Color::BLACK,
+                      TextAlign::TOP_RIGHT, "BAT %.0f%%  HA %s",
+                      id(battery_level).state,
+                      id(sticky_api).is_connected() ? "OK" : "OFF");
+          } else {
+            it.printf(780, 52, id(font_small), Color::BLACK,
+                      TextAlign::TOP_RIGHT, "HA %s",
+                      id(sticky_api).is_connected() ? "OK" : "OFF");
+          }
 
-      // ---- Battery / 电池 ----
-      if (isnan(id(battery_level).state)) {
-        it.printf(30, 260, id(font_medium), COLOR_OFF, "Battery: --%%");
-      } else {
-        it.printf(30, 260, id(font_medium), COLOR_OFF, "Battery: %.0f%%", id(battery_level).state);
-      }
+          it.line(20, 78, 780, 78, Color::BLACK);
 
-      // ---- Button hints / 按键提示 ----
-      it.line(20, 370, 780, 370, COLOR_OFF);
-      it.printf(30, 380, id(font_small), COLOR_OFF, "UP/DOWN: beep");
-      it.printf(30, 405, id(font_small), COLOR_OFF, "OK (GPIO4): wake");
+          // ---------- Reusable monochrome control tile ----------
+          auto draw_tile = [&](int x, int y, int w, int h,
+                               const char *label, bool active,
+                               const char *inactive_text,
+                               const char *active_text) {
+            if (active) {
+              it.filled_rectangle(x, y, w, h, Color::BLACK);
+              it.printf(x + w / 2, y + 24, id(font_medium), Color::WHITE,
+                        TextAlign::TOP_CENTER, "%s", label);
+              it.printf(x + w / 2, y + 76, id(font_large), Color::WHITE,
+                        TextAlign::TOP_CENTER, "%s", active_text);
+            } else {
+              it.rectangle(x, y, w, h, Color::BLACK);
+              it.printf(x + w / 2, y + 24, id(font_medium), Color::BLACK,
+                        TextAlign::TOP_CENTER, "%s", label);
+              it.printf(x + w / 2, y + 76, id(font_large), Color::BLACK,
+                        TextAlign::TOP_CENTER, "%s", inactive_text);
+            }
+          };
 
-      // ---- Touch status / 触摸状态 ----
-      it.printf(450, 430, id(font_small), COLOR_OFF, TextAlign::TOP_CENTER, "Touch: GT911");
+          draw_tile(20, 88, 370, 132, "${control_1_name}",
+                    id(control_1_state).state, "OFF", "ON");
+          draw_tile(410, 88, 370, 132, "${control_2_name}",
+                    id(control_2_state).state, "OFF", "ON");
+          draw_tile(20, 235, 370, 132, "${control_3_name}",
+                    id(control_3_state).state, "OFF", "ON");
 
-      // ---- Footer / 页脚 ----
-      it.printf(400, 458, id(font_small), COLOR_OFF, TextAlign::TOP_CENTER,
-                "Selected Sticky hardware features enabled");
+          // ALL OFF is an action rather than a stateful tile.
+          it.rectangle(410, 235, 370, 132, Color::BLACK);
+          it.rectangle(415, 240, 360, 122, Color::BLACK);
+          it.print(595, 258, id(font_medium), Color::BLACK,
+                   TextAlign::TOP_CENTER, "ROOM");
+          it.print(595, 304, id(font_large), Color::BLACK,
+                   TextAlign::TOP_CENTER, "ALL OFF");
 
-# -----------------------------------------------------------------------------
-# secrets.yaml (create alongside this config):
-# secrets.yaml（与本配置同目录创建）：
-#   wifi_ssid: "Your WiFi SSID"
-#   wifi_password: "Your WiFi Password"
-#   ota_password: "choose-a-strong-password"
-#   api_encryption_key: "generate with: openssl rand -base64 32"
-#
-# Install options / 安装方式：
-#   ESPHome Web:  https://web.esphome.io  (Chrome/Edge, pick the downloaded YAML)
-#   ESPHome CLI:  esphome run reterminal-sticky.yaml
-# -----------------------------------------------------------------------------
+          // ---------- Bottom navigation ----------
+          it.filled_rectangle(0, 400, 400, 80, Color::BLACK);
+          it.print(200, 423, id(font_medium), Color::WHITE,
+                   TextAlign::TOP_CENTER, "ROOM");
+          it.rectangle(400, 400, 400, 80, Color::BLACK);
+          it.print(600, 423, id(font_medium), Color::BLACK,
+                   TextAlign::TOP_CENTER, "GUEST WI-FI");
 
+      - id: guest_wifi_page
+        lambda: |-
+          it.fill(Color::WHITE);
 
+          it.print(20, 12, id(font_medium), Color::BLACK,
+                   TextAlign::TOP_LEFT, "Guest Wi-Fi");
+          it.print(780, 16, id(font_small), Color::BLACK,
+                   TextAlign::TOP_RIGHT, "Scan to join");
+          it.line(20, 62, 780, 62, Color::BLACK);
+
+          // Keep the QR code comfortably inside a 270x270 area.
+          int modules = id(guest_wifi_qr).get_size();
+          int scale = 270 / modules;
+          if (scale < 2) scale = 2;
+          int qr_size = modules * scale;
+          int qr_x = 45 + ((290 - qr_size) / 2);
+          int qr_y = 87 + ((285 - qr_size) / 2);
+          it.qr_code(qr_x, qr_y, id(guest_wifi_qr), Color::BLACK, scale);
+
+          it.print(380, 100, id(font_small), Color::BLACK,
+                   "NETWORK");
+          it.printf(380, 132, id(font_medium), Color::BLACK,
+                    "%s", "${guest_wifi_ssid}");
+          it.line(380, 180, 755, 180, Color::BLACK);
+
+          it.print(380, 210, id(font_medium), Color::BLACK,
+                   "1. Open your camera");
+          it.print(380, 258, id(font_medium), Color::BLACK,
+                   "2. Scan the code");
+          it.print(380, 306, id(font_medium), Color::BLACK,
+                   "3. Tap Join");
+          it.print(380, 354, id(font_tiny), Color::BLACK,
+                   "No app or manual password needed");
+
+          // ---------- Bottom navigation ----------
+          it.rectangle(0, 400, 400, 80, Color::BLACK);
+          it.print(200, 423, id(font_medium), Color::BLACK,
+                   TextAlign::TOP_CENTER, "ROOM");
+          it.filled_rectangle(400, 400, 400, 80, Color::BLACK);
+          it.print(600, 423, id(font_medium), Color::WHITE,
+                   TextAlign::TOP_CENTER, "GUEST WI-FI");
